@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"paymatch/internal/provider"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type EventRow struct {
@@ -63,8 +65,9 @@ func (r *Repo) FetchUnprocessedEvents(ctx context.Context, limit int) ([]EventRo
 	return out, rows.Err()
 }
 
-func (r *Repo) MarkEventProcessed(ctx context.Context, id int64, status string) error {
-	_, err := r.db.Exec(ctx, `UPDATE payment_events SET processed_at=now(), status=$2 WHERE id=$1`, id, status)
+// MarkEventProcessedTx: mark processed within an existing tx
+func (r *Repo) MarkEventProcessedTx(ctx context.Context, tx pgx.Tx, id int64, status string) error {
+	_, err := tx.Exec(ctx, `UPDATE payment_events SET processed_at=now(), status=$2 WHERE id=$1`, id, status)
 	return err
 }
 

@@ -68,7 +68,7 @@ func MpesaC2BValidation(repo *postgres.Repo) http.HandlerFunc {
 	}
 }
 
-// CONFIRMATION: persist the payment/event; only ACK if event is durably saved.
+// CONFIRMATION: persist the payment event; only ACK if event is durably saved.
 func MpesaC2BConfirmation(repo *postgres.Repo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var cb c2bCallback
@@ -91,12 +91,11 @@ func MpesaC2BConfirmation(repo *postgres.Repo) http.HandlerFunc {
 			}
 		}
 
-		// BillRef may be empty for buygoods; that's OK.
-		invoice := strings.TrimSpace(cb.BillRefNumber)
-
-		// 1) Save raw event FIRST (idempotent). If this fails, DO NOT ACK.
+		invoice := strings.TrimSpace(cb.BillRefNumber) // may be empty for buygoods
 		raw, _ := json.Marshal(cb)
-		eid, err := repo.SaveEvent(r.Context(), tenant.ID, cred.ID, provider.Event{
+
+		// MUST persist the event before ACK; this is your single ingest queue.
+		_, err = repo.SaveEvent(r.Context(), tenant.ID, cred.ID, provider.Event{
 			Type:       provider.EventC2B,
 			ExternalID: strings.TrimSpace(cb.TransID),
 			Amount:     amt,
@@ -105,34 +104,12 @@ func MpesaC2BConfirmation(repo *postgres.Repo) http.HandlerFunc {
 			RawJSON:    raw,
 		})
 		if err != nil {
-			// Return non-2xx so Safaricom retries; we haven't captured the event.
 			http.Error(w, "temporary failure", http.StatusInternalServerError)
 			return
 		}
 
-		// 2) Best-effort enqueue for replay/retry processing.
-		if err := repo.EnqueueEvent(r.Context(), tenant.ID, eid); err != nil {
-			// Not fatal: event is saved; you can replay/backfill later.
-			// log.Warn().Err(err).Msg("enqueue failed")
-		}
-
-		// 3) Best-effort immediate payment upsert (optional; worker will also reconcile).
-		if err := repo.UpsertPaymentByExternalID(
-			r.Context(),
-			tenant.ID,
-			cred.ID,
-			strings.TrimSpace(cb.TransID),
-			invoice,
-			amt,
-			strings.TrimSpace(cb.MSISDN),
-		); err != nil {
-			// Not fatal; event is saved and will be retried by the queue worker.
-			// log.Warn().Err(err).Msg("upsert payment failed (c2b)")
-		}
-
-		// 4) Now it’s safe to ACK the provider.
+		// Now it's safe to ACK. Worker will pick from payment_events.
 		w.Header().Set("Content-Type", "application/json")
-		// Daraja C2B confirmation typically accepts 200 with any body; this is fine.
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"ResultDesc":"Received"}`))
 	}
