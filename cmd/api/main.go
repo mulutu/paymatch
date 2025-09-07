@@ -9,11 +9,14 @@ import (
 	"time"
 
 	"paymatch/internal/config"
+	"paymatch/internal/services/data"
+	"paymatch/internal/services/event"
+	"paymatch/internal/services/payment"
+	"paymatch/internal/services/tenant"
 	httpx "paymatch/internal/http"
+	"paymatch/internal/provider"
 	"paymatch/internal/provider/mpesa"
 	"paymatch/internal/store/postgres"
-
-	"paymatch/internal/core/reconcile"
 
 	"github.com/rs/zerolog/log"
 )
@@ -23,20 +26,58 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Init DB
+	log.Info().Msg("starting PayMatch API server")
+
+	// Initialize database
 	pool := postgres.MustOpen(ctx, cfg.DB.DSN)
 	defer pool.Close()
-	repo := postgres.NewRepo(pool, cfg)
+	
+	// Create repository implementations
+	paymentRepo := postgres.NewPaymentRepository(pool)
+	eventRepo := postgres.NewEventRepository(pool)
+	tenantRepo := postgres.NewTenantRepository(pool)
+	credentialRepo := postgres.NewCredentialRepository(pool)
+	unitOfWork := postgres.NewUnitOfWork(pool)
+	
+	// Create services with dependency injection
+	paymentService := payment.NewService(paymentRepo, eventRepo)
+	tenantService := tenant.NewService(tenantRepo, credentialRepo, cfg)
+	dataService := data.NewService(paymentRepo, eventRepo)
 
-	// Init providers registry (only M-Pesa for MVP)
-	mp := mpesa.New(cfg, repo)
+	// Initialize provider registry with pure architecture
+	providerRegistry := provider.NewProviderRegistry(cfg, credentialRepo)
+	
+	// Register available providers
+	mpesaProvider := mpesa.New(cfg)
+	providerRegistry.RegisterProvider(provider.ProviderMpesa, mpesaProvider)
+	
+	log.Info().
+		Int("provider_count", len(providerRegistry.ListProviders())).
+		Msg("provider registry initialized with all available providers")
 
-	// ✅ Start reconciliation worker
-	worker := reconcile.NewWorker(repo)
-	go worker.Run(ctx)
+	// Create event services
+	eventProcessor := event.NewProcessor(eventRepo, paymentService, unitOfWork)
+	replayService := event.NewReplayService(eventRepo, pool)
 
-	// Router
-	r := httpx.NewRouter(cfg, repo, mp)
+	// Start event processing worker with pure architecture
+	workerConfig := event.DefaultWorkerConfig()
+	eventWorker, err := event.NewEventProcessingSystem(pool, paymentService, workerConfig)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create event processing system")
+	}
+	go eventWorker.Run(ctx)
+	log.Info().Msg("event processing worker started (pure architecture)")
+
+	// Create HTTP router with pure architecture
+	routerDeps := httpx.RouterDependencies{
+		Config:           cfg,
+		TenantService:    tenantService,
+		DataService:      dataService,
+		EventService:     replayService,
+		EventProcessor:   eventProcessor,
+		ProviderRegistry: providerRegistry,
+	}
+	r := httpx.NewRouter(routerDeps)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.App.Port,
@@ -46,20 +87,33 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown
+	// Start server in a goroutine
 	go func() {
-		log.Info().Msgf("PayMatch API listening on :%s", cfg.App.Port)
+		log.Info().
+			Str("port", cfg.App.Port).
+			Str("environment", cfg.App.Env).
+			Msg("PayMatch API server listening")
+		
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("server failed")
+			log.Fatal().Err(err).Msg("server failed to start")
 		}
 	}()
 
+	// Wait for interrupt signal for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
+	
+	log.Info().Msg("shutting down server...")
 	cancel()
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel2()
-	_ = srv.Shutdown(ctx2)
-	log.Info().Msg("server stopped")
+
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("server forced to shutdown")
+	}
+	
+	log.Info().Msg("server stopped gracefully")
 }

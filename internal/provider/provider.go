@@ -1,29 +1,27 @@
 package provider
 
-type STKPushReq struct {
-	Amount      int
-	Phone       string
-	AccountRef  string
-	Description string
-}
-
-type STKPushResp struct {
-	CheckoutRequestID string
-	CustomerMessage   string
-}
-
-type EventType string
-
-const (
-	EventSTK EventType = "stk"
-	EventC2B EventType = "c2b"
+import (
+	"context"
+	"paymatch/internal/domain/credential"
 )
 
-type Event struct {
-	Type       EventType
-	ExternalID string
-	Amount     int
-	MSISDN     string
-	InvoiceRef string
-	RawJSON    []byte
+// Provider defines the interface all payment providers must implement
+type Provider interface {
+	// Core payment operations
+	STKPush(ctx context.Context, cred *credential.ProviderCredential, req STKPushReq) (*STKPushResp, error)
+	B2C(ctx context.Context, cred *credential.ProviderCredential, req B2CReq) (*B2CResp, error)
+	BulkTransfer(ctx context.Context, cred *credential.ProviderCredential, req BulkTransferReq) (*BulkTransferResp, error)
+
+	// Webhook processing
+	ParseWebhook(body []byte, headers map[string]string) (Event, error)
+	ValidateWebhook(body []byte, headers map[string]string, webhookToken string) error
+
+	// Provider metadata
+	Name() string
+	SupportedOperations() []OperationType
+	RequiredCredentialFields() []CredentialField
+
+	// Account operations
+	CheckBalance(ctx context.Context, cred *credential.ProviderCredential) (*BalanceResp, error)
+	GetTransactionStatus(ctx context.Context, cred *credential.ProviderCredential, externalID string) (*StatusResp, error)
 }
