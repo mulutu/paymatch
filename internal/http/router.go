@@ -56,6 +56,16 @@ func NewRouter(deps RouterDependencies) http.Handler {
 		r.Post("/events/replay", handlers.ReplayEvents(deps.EventService))
 	})
 
+	// V1 Admin routes (alternative path for compatibility)
+	r.Route("/v1/admin", func(r chi.Router) {
+		r.Use(middlewarex.AdminAuth(deps.Config))
+		
+		// Tenant management
+		r.Route("/tenants", func(r chi.Router) {
+			r.Post("/onboard", handlers.OnboardTenant(deps.TenantService, deps.Config))
+		})
+	})
+
 	// API routes (protected by API key auth)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middlewarex.APIKeyAuth(deps.TenantService))
@@ -66,7 +76,7 @@ func NewRouter(deps RouterDependencies) http.Handler {
 		
 		// Provider payment operations (if registry is available)
 		if deps.ProviderRegistry != nil {
-			r.Post("/payments/stk", handlers.STKPush(deps.ProviderRegistry))
+			r.Post("/payments/stk", handlers.STKPush(deps.ProviderRegistry, deps.TenantService))
 			r.Post("/payments/b2c", handlers.B2C(deps.ProviderRegistry))
 		}
 	})

@@ -8,7 +8,9 @@
       "Bash(go run:*)",
       "Bash(go test:*)",
       "Bash(find:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(grep:*)",
+      "Bash(pkill:*)"
     ],
     "deny": []
   }

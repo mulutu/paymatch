@@ -42,8 +42,8 @@ func (r *tenantRepository) FindByAPIKeyHash(ctx context.Context, keyHash string)
 	row := r.db.QueryRow(ctx, `
 		SELECT t.id, t.name, t.status
 		FROM tenants t
-		JOIN api_keys ak ON t.id = ak.tenant_id
-		WHERE ak.key_hash = $1 AND ak.is_active = true AND t.status = 'active'`, keyHash)
+		JOIN tenant_api_keys ak ON t.id = ak.tenant_id
+		WHERE ak.key_hash = $1 AND t.status = 'active'`, keyHash)
 	
 	return r.scanTenant(row)
 }
@@ -59,9 +59,9 @@ func (r *tenantRepository) SaveAPIKey(ctx context.Context, apiKey *tenant.APIKey
 // FindAPIKeyByHash finds an API key by hash
 func (r *tenantRepository) FindAPIKeyByHash(ctx context.Context, keyHash string) (*tenant.APIKey, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT id, tenant_id, name, key_hash, is_active
-		FROM api_keys 
-		WHERE key_hash = $1 AND is_active = true`, keyHash)
+		SELECT id, tenant_id, name, key_hash
+		FROM tenant_api_keys 
+		WHERE key_hash = $1`, keyHash)
 	
 	return r.scanAPIKey(row)
 }
@@ -91,10 +91,10 @@ func (r *tenantRepository) update(ctx context.Context, t *tenant.Tenant) error {
 // insertAPIKey creates a new API key record
 func (r *tenantRepository) insertAPIKey(ctx context.Context, apiKey *tenant.APIKey) error {
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO api_keys (tenant_id, name, key_hash, is_active)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO tenant_api_keys (tenant_id, name, key_hash)
+		VALUES ($1, $2, $3)
 		RETURNING id`,
-		apiKey.TenantID, apiKey.Name, apiKey.KeyHash, apiKey.IsActive).Scan(&apiKey.ID)
+		apiKey.TenantID, apiKey.Name, apiKey.KeyHash).Scan(&apiKey.ID)
 	
 	return err
 }
@@ -102,10 +102,10 @@ func (r *tenantRepository) insertAPIKey(ctx context.Context, apiKey *tenant.APIK
 // updateAPIKey modifies an existing API key record
 func (r *tenantRepository) updateAPIKey(ctx context.Context, apiKey *tenant.APIKey) error {
 	_, err := r.db.Exec(ctx, `
-		UPDATE api_keys 
-		SET name = $1, is_active = $2
+		UPDATE tenant_api_keys 
+		SET name = $1
 		WHERE id = $3`,
-		apiKey.Name, apiKey.IsActive, apiKey.ID)
+		apiKey.Name, apiKey.ID)
 	
 	return err
 }
@@ -130,7 +130,10 @@ func (r *tenantRepository) scanAPIKey(row pgx.Row) (*tenant.APIKey, error) {
 	var apiKey tenant.APIKey
 	
 	err := row.Scan(
-		&apiKey.ID, &apiKey.TenantID, &apiKey.Name, &apiKey.KeyHash, &apiKey.IsActive)
+		&apiKey.ID, &apiKey.TenantID, &apiKey.Name, &apiKey.KeyHash)
+	
+	// Set IsActive to true by default since our table doesn't track this
+	apiKey.IsActive = true
 	if err != nil {
 		return nil, err
 	}

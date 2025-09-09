@@ -172,6 +172,17 @@ func (s *Service) createProviderCredential(ctx context.Context, tenantID int64, 
 		return nil, err
 	}
 
+	// Encrypt and set credential fields
+	if err := providerCred.SetEncryptedField("passkey", req.Passkey, s.cfg.Sec.AESKey); err != nil {
+		return nil, fmt.Errorf("failed to encrypt passkey: %w", err)
+	}
+	if err := providerCred.SetEncryptedField("consumer_key", req.ConsumerKey, s.cfg.Sec.AESKey); err != nil {
+		return nil, fmt.Errorf("failed to encrypt consumer key: %w", err)
+	}
+	if err := providerCred.SetEncryptedField("consumer_secret", req.ConsumerSecret, s.cfg.Sec.AESKey); err != nil {
+		return nil, fmt.Errorf("failed to encrypt consumer secret: %w", err)
+	}
+
 	return providerCred, nil
 }
 

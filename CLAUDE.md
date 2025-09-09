@@ -30,17 +30,21 @@ go build -o api ./cmd/api
 
 ### Frontend Applications
 ```bash
-# Start marketing site (www.paymatch.co)
+# Start marketing site (www.paymatch.co) - Next.js 15 + Tailwind + Turbopack
 cd web/marketing && npm run dev
 # Runs on http://localhost:3000
 
-# Start dashboard/console (app.paymatch.co)  
+# Start dashboard/console (app.paymatch.co) - Next.js 15 + NextAuth + Prisma
 cd web/dashboard && npm run dev --port 3001
 # Runs on http://localhost:3001
 
 # Build for production
 cd web/marketing && npm run build
 cd web/dashboard && npm run build
+
+# Lint frontend code
+cd web/marketing && npm run lint
+cd web/dashboard && npm run lint
 
 # Install dependencies
 cd web/marketing && npm install
@@ -49,7 +53,7 @@ cd web/dashboard && npm install
 
 ### Database Operations
 ```bash
-# Run all migrations in sequence
+# Run all migrations in sequence (001->002->003_*->004->005->006)
 make migrate
 
 # Connect to database directly
@@ -57,6 +61,18 @@ psql "$DB_DSN"
 
 # Manual tenant/API key setup (for testing)
 # See README.md for SQL commands to create test tenant and credentials
+```
+
+### Testing
+```bash
+# Run integration tests
+go test ./integration_test.go -v
+
+# Run all Go tests (when unit tests exist)
+go test ./... -v
+
+# Run single test file
+go test -run TestPureArchitectureIntegration ./integration_test.go -v
 ```
 
 ### Testing API Endpoints
@@ -83,7 +99,7 @@ PayMatch is a multi-tenant SaaS payment rails aggregator that enables businesses
 
 **Multi-Tenancy**: Each tenant has isolated credentials, API keys, and payment data. Tenants can have multiple provider configurations (different shortcodes, environments).
 
-**Encryption at Rest**: All sensitive provider credentials (M-Pesa consumer keys, passkeys) are encrypted using AES-256 before storage.
+**Encryption at Rest**: All sensitive provider credentials (M-Pesa consumer keys, passkeys) are encrypted using AES-256-GCM before storage.
 
 ### Key Components
 
@@ -96,7 +112,7 @@ PayMatch is a multi-tenant SaaS payment rails aggregator that enables businesses
    - `auth.go` - Provider authentication with token caching
    - `webhook.go` - Webhook payload parsing
 
-3. **Event Processing** (`internal/core/reconcile/worker.go`): Background worker that processes payment events, updating payment status and triggering business logic.
+3. **Event Processing** (`internal/services/event/worker.go`): Background worker that processes payment events, updating payment status and triggering business logic.
 
 4. **HTTP Layer** (`internal/http/`): Clean separation between HTTP handling and business logic. Handlers are thin wrappers that call provider registry methods.
 
@@ -136,6 +152,16 @@ Migrations are numbered sequentially in `internal/store/postgres/migrations/`. A
 
 ### Environment Configuration
 The app loads configuration through the `config` package which reads from environment variables. Provider credentials are encrypted before storage and decrypted at runtime using the AES key from `AES_256_KEY_BASE64`.
+
+**Required Environment Variables:**
+```bash
+APP_ENV=sandbox                       # Environment mode (sandbox/production)
+DB_DSN=postgres://...                # PostgreSQL connection string
+AES_256_KEY_BASE64=...               # Base64-encoded 32-byte AES encryption key
+CALLBACK_BASE_URL=...                # Base URL for webhook callbacks
+RATE_LIMIT_PER_MIN=300               # API rate limiting
+TZ=Africa/Nairobi                    # Timezone for operations
+```
 
 ## Development Best Practices
 
